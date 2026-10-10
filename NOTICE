@@ -1,0 +1,76 @@
+MeSL
+Copyright (C) 2026 DNT_OF
+SPDX-License-Identifier: GPL-3.0-only
+源码 / Source: https://github.com/DNTOF/MeSL
+
+本程序依据 GNU 通用公共许可证第 3 版（仅限第 3 版，GPL-3.0-only）发布，完整条款见仓库根目录 LICENSE。
+This program is licensed under the GNU General Public License version 3 only
+(GPL-3.0-only). See LICENSE for the full text.
+
+
+一、源自 SLDataAPI 的部分 / Derived from SLDataAPI
+
+MeSL 的语音链路沿用了 SLDataAPI（同一作者 DNT_OF，GPL-3.0-only）语音转发中经线上验证的实现与协议选择，
+相关源文件保留了 SLDataAPI 的版权 / SPDX 头。
+MeSL reuses proven voice-stream code and protocol choices from SLDataAPI (same author, DNT_OF,
+GPL-3.0-only). Affected source files keep the SLDataAPI copyright/SPDX headers.
+
+  SLDataAPI — Copyright (C) 2026 DNT_OF — https://github.com/DNTOF/SLDataAPI
+
+  来源 / Origin                                   → MeSL
+  Voice/VoiceService.cs  VoiceClient              → src/Mesh/PeerLink.cs
+     主线程轮询、握手超时、Poll 写守卫 + 3 s 不可写判死、250 ms SendTimeout
+     main-thread polling, handshake timeout, Poll write guard + 3 s unwritable drop, 250 ms SendTimeout
+  Voice/VoiceService.cs  ProcessWsFrames/SendWsFrame/TryHandshake
+                                                  → src/Core/WsFraming.cs
+     帧长回绕检查（L-02）、超缓冲帧断连（N-01）、RFC 6455 握手
+     length-wrap check (L-02), oversize-for-buffer disconnect (N-01), RFC 6455 handshake
+  Voice/VoiceService.cs  TickOnce                 → src/Mesh/MeshLinkService.cs
+     未握手 / 已鉴权分池、Accept 上限、心跳日志
+     pending vs. authenticated pools, accept cap, heartbeat log
+  Voice/VoiceService.cs  HandleIncoming/FnvHash   → src/Voice/VoiceCapture.cs, src/Core/Fnv.cs
+     netId 为键、FNV-1a 内容去重、0.8 s 讲话段、说话者帧去重
+     netId keys, FNV-1a content dedupe, 0.8 s burst detection, speaker-frame dedupe
+  语音 WS 二进制帧 0x01 | channel | playerId | seq | payload
+  voice WS binary frame                           → src/Core/MeshFrames.cs（VOICE 帧布局 / layout）
+  Voice/VoiceRecorder.cs CleanField（X-01）       → src/Core/MeshFrames.cs MeshCodec.CleanField
+  Control/ControlAuth.cs 失败锁定、SecureEquals   → src/Core/AuthLockout.cs
+  Plugin.cs / Log.cs     事件链保护、配置自检、日志门面
+                         event-chain guards, config integrity check, log facade
+                                                  → src/Plugin.cs, src/Log.cs
+
+MeSL 不解码语音（SLDataAPI 解码为 PCM 供 WebUI 收听），Opus 字节原样转发。
+Unlike SLDataAPI (which decodes to PCM for its WebUI), MeSL forwards Opus bytes as-is.
+
+
+二、MeSL 原创部分 / Original to MeSL
+
+  MeSL-Protocol-v0（docs/MeSL-Protocol-v0.md）：HMAC 双向握手、HELLO 频道表、站点编码、
+  一说话者一代理的原版路径重注入、阵营分组接收过滤、雷达门。
+  MeSL-Protocol-v0: mutual HMAC handshake, HELLO channel table, site encoding, per-speaker proxy
+  reinjection through the vanilla server voice path, faction-group receive filter, radio gate.
+
+
+三、第三方 / Third party
+
+- SCP: Secret Laboratory 游戏程序集与 VoiceChat Opus 编解码 — Northwood Studios。
+  仅在编译期引用，本项目不分发。
+  SCP: Secret Laboratory game assemblies and VoiceChat Opus codec by Northwood Studios
+  (referenced at compile time only, not redistributed).
+- LabAPI — SCP: Secret Laboratory 官方插件框架 / the official SCP:SL plugin framework (Northwood Studios).
+- Microsoft.NETFramework.ReferenceAssemblies — MIT License（仅编译期 / build-time only）。
+- 测试 / Tests: xUnit (Apache-2.0), Microsoft.NET.Test.Sdk (MIT)。
+- WebSocket 握手与帧格式遵循公开标准 RFC 6455；HMAC-SHA256 见 RFC 2104 / FIPS 180-4。
+  WebSocket handshake/framing follows RFC 6455; HMAC-SHA256 per RFC 2104 / FIPS 180-4.
+
+
+四、复用要求 / Reuse requirements
+
+复用或改写本项目代码时，须：
+When reusing or adapting code from this project, you must:
+  1. 保留源文件中的版权 / SPDX 头以及本 NOTICE 文件（含上文对 SLDataAPI 的署名）；
+     keep the copyright/SPDX headers in source files and this NOTICE file (including the SLDataAPI credit above);
+  2. 衍生作品以 GPL-3.0-only 发布并提供源代码；
+     distribute derivative works under GPL-3.0-only, with source code;
+  3. 注明来自 DNTOF/MeSL（https://github.com/DNTOF/MeSL）与 DNTOF/SLDataAPI（https://github.com/DNTOF/SLDataAPI）。
+     credit DNTOF/MeSL and DNTOF/SLDataAPI.
