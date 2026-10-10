@@ -1,0 +1,23 @@
+bin/
+obj/
+*.user
+*.suo
+*.log
+.vs/
+.vscode/
+.idea/
+TestResults/
+.DS_Store
+
+# 游戏 / 第三方程序集一律不入库（Assembly-CSharp 等禁止二次分发）
+*.dll
+*.pdb
+*.exe
+
+# 本地配置与密钥（peers.secret 只写在服务器本地配置里）
+config.yml
+*.secret
+*.pem
+*.key
+key.snk
+.env
