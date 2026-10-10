@@ -46,9 +46,10 @@ Unlike SLDataAPI (which decodes to PCM for its WebUI), MeSL forwards Opus bytes 
 二、MeSL 原创部分 / Original to MeSL
 
   MeSL-Protocol-v0（docs/MeSL-Protocol-v0.md）：HMAC 双向握手、HELLO 频道表、站点编码、
-  一说话者一代理的原版路径重注入、阵营分组接收过滤、雷达门。
-  MeSL-Protocol-v0: mutual HMAC handshake, HELLO channel table, site encoding, per-speaker proxy
-  reinjection through the vanilla server voice path, faction-group receive filter, radio gate.
+  一说话者一代理、隐身代理仅以对讲机经原版路径重注入、阵营分组接收过滤、雷达门。
+  MeSL-Protocol-v0: mutual HMAC handshake, HELLO channel table, site encoding, per-speaker hidden
+  proxy reinjected as radio only through the vanilla server voice path, faction-group receive
+  filter, radio gate.
 
 
 三、第三方 / Third party

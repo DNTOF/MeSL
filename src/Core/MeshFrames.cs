@@ -53,7 +53,7 @@ public sealed class MeshVoiceFrame
 
     /// <summary>频道下标：指向「发送方」HELLO 里宣告的频道表，接收方按名称映射到本地频道。</summary>
     public byte ChannelIndex;
-    /// <summary>采集时的原版 VoiceChatChannel（Proximity / Radio / Spectator）。</summary>
+    /// <summary>采集时的原版 VoiceChatChannel（Proximity / Radio / Spectator）。只做一致性校验，接收端重注入频道由 Group 决定（人类恒为 Radio）。</summary>
     public byte VoiceChannel;
     public MeshGroup Group;
     /// <summary>发送服上说话者的 netId；接收服以 (peer, netId) 作为代理说话者键。</summary>

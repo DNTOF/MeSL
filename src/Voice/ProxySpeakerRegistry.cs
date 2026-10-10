@@ -15,15 +15,18 @@ using UnityEngine;
 using VoiceChat;
 using VoiceChat.Networking;
 using Player = LabApi.Features.Wrappers.Player;
+using RadioItem = LabApi.Features.Wrappers.RadioItem;
+using RadioMessages = InventorySystem.Items.Radio.RadioMessages;
 
 namespace MeSL.Voice;
 
 /// <summary>
-/// 接收端重注入（MeSL-Protocol-v0 §6）。
-/// 每个远端说话者 (peer, originNetId) 在本服对应一个 Dummy 代理：身份与发送方相同、站在还原后的采集站点，
-/// 然后以代理自己的连接调用原版 VoiceTransceiver.ServerReceiveMessage——
-/// 本服的 ValidateSend / 逐接收者 ValidateReceive（距离、对讲机）/ LabAPI ReceivingVoiceMessage（MeSL 阵营过滤）
-/// 全部按原版路径自然生效，Opus 字节原样下发。
+/// 接收端重注入（MeSL-Protocol-v0 §6）。远端语音只以对讲机（旁观者为旁观者频道）重注入，从不以近距离语音播放。
+/// 每个远端说话者 (peer, originNetId) 在本服对应一个 Dummy 代理：身份与发送方相同、服务端位置在还原后的采集站点
+/// （决定对讲机距离判定的发射点），对客户端隐身（见 ProxyGuards.OnValidatedVisibility），
+/// 然后以代理自己的连接调用原版 VoiceTransceiver.ServerReceiveMessage(Radio)——
+/// 本服的 ValidateSend / 逐接收者 ValidateReceive / LabAPI ReceivingVoiceMessage（MeSL 阵营过滤）按原版路径生效，
+/// Opus 字节原样下发。
 /// 必须一个说话者一个代理：客户端按说话者 Hub 各自维护 Opus 解码器，两人共用代理会互相破坏解码状态。
 /// </summary>
 public static class ProxySpeakerRegistry
@@ -39,6 +42,7 @@ public static class ProxySpeakerRegistry
         public int LocalChannel;
         public RoleTypeId Role;
         public float LastSeen;
+        public RadioItem? Radio;
     }
 
     private static readonly Dictionary<(string Peer, uint NetId), Proxy> ByKey = new();
@@ -49,16 +53,23 @@ public static class ProxySpeakerRegistry
     private static int _maxTotal = 16;
     private static int _maxPerPeer = 8;
     private static float _idleSeconds = 6f;
+    private static RadioMessages.RadioRangeLevel _radioRange = RadioMessages.RadioRangeLevel.UltraRange;
 
     public static long InjectedPackets { get; private set; }
     public static int Count => ByKey.Count;
 
     /// <summary>绑定原版服务端语音入口。失败则重注入整体关闭（fail-safe：只丢远端语音，不影响本服）。</summary>
-    public static bool Init(int maxTotal, int maxPerPeer, float idleSeconds)
+    public static bool Init(int maxTotal, int maxPerPeer, float idleSeconds, RadioMessages.RadioRangeLevel radioRange)
     {
         _maxTotal = Math.Max(0, maxTotal);
         _maxPerPeer = Math.Max(0, maxPerPeer);
         _idleSeconds = Math.Max(1f, idleSeconds);
+        if (radioRange < RadioMessages.RadioRangeLevel.LowRange || radioRange > RadioMessages.RadioRangeLevel.UltraRange)
+        {
+            Log.Warn($"[MeSL] remote_radio_range={radioRange} 不可用，改用 UltraRange");
+            radioRange = RadioMessages.RadioRangeLevel.UltraRange;
+        }
+        _radioRange = radioRange;
         try
         {
             MethodInfo? mi = typeof(VoiceTransceiver).GetMethod("ServerReceiveMessage",
@@ -102,11 +113,14 @@ public static class ProxySpeakerRegistry
         // 对端声称的身份必须与其阵营分组一致，防止伪造 SCP / 非 mesh 身份借道发声
         if (GameMapping.GroupOf(role) != frame.Group || frame.Group == MeshGroup.None) return;
 
-        var channel = (VoiceChatChannel)frame.VoiceChannel;
+        // voice_channel 只是采集时的频道，仅做一致性校验；重注入频道由分组唯一决定（人类 = Radio）
+        var captured = (VoiceChatChannel)frame.VoiceChannel;
         bool spectator = frame.Group == MeshGroup.Spectator;
-        if (spectator ? channel != VoiceChatChannel.Spectator
-                      : channel != VoiceChatChannel.Proximity && channel != VoiceChatChannel.Radio)
+        if (spectator ? captured != VoiceChatChannel.Spectator
+                      : captured != VoiceChatChannel.Proximity && captured != VoiceChatChannel.Radio)
             return;
+        VoiceChatChannel channel = GameMapping.ChannelOf(MeshPolicy.ReinjectKind(frame.Group));
+        if (channel != VoiceChatChannel.Radio && channel != VoiceChatChannel.Spectator) return;
 
         Proxy? proxy = GetOrSpawn(peerId, frame, role, frameLocalChannel);
         if (proxy == null) return;
@@ -121,8 +135,11 @@ public static class ProxySpeakerRegistry
             return;
         }
 
-        if (!spectator && !PlaceAtSite(proxy, frame, channel)) return;
-        if (channel == VoiceChatChannel.Radio && !EnsureRadio(proxy)) return;
+        if (!spectator)
+        {
+            PlaceAtSite(proxy, frame);
+            if (!EnsureRadio(proxy)) return;
+        }
 
         var msg = new VoiceMessage(proxy.Hub, channel, frame.Opus, frame.OpusLength, false);
         try
@@ -248,38 +265,51 @@ public static class ProxySpeakerRegistry
         }
     }
 
-    /// <summary>把代理放到采集站点。站点无法还原时：对讲机帧仍可投递（对讲机不依赖位置），近距离帧丢弃。</summary>
-    private static bool PlaceAtSite(Proxy proxy, MeshVoiceFrame frame, VoiceChatChannel channel)
+    /// <summary>
+    /// 把代理的服务端位置放到采集站点。只用于对讲机发射点（客户端按发射点所在路点判定对讲机距离），
+    /// 代理对客户端隐身，不会有人看到或在近距离听到它。站点无法还原时保持原位，照常投递。
+    /// </summary>
+    private static void PlaceAtSite(Proxy proxy, MeshVoiceFrame frame)
     {
-        if (frame.Site.HasValue && SiteResolver.TryResolve(frame.Site.Value, out Vector3 pos))
+        if (!frame.Site.HasValue || !SiteResolver.TryResolve(frame.Site.Value, out Vector3 pos)) return;
+        try
         {
-            try
-            {
-                if ((proxy.Player.Position - pos).sqrMagnitude > 0.01f)
-                    proxy.Player.Position = pos;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Log.RateLimitedWarn("place", $"[MeSL] 代理说话者定位失败: {ex.Message}");
-                return channel == VoiceChatChannel.Radio;
-            }
+            if ((proxy.Player.Position - pos).sqrMagnitude > 0.01f)
+                proxy.Player.Position = pos;
         }
-        return channel == VoiceChatChannel.Radio;
+        catch (Exception ex)
+        {
+            Log.RateLimitedWarn("place", $"[MeSL] 代理说话者定位失败: {ex.Message}");
+        }
     }
 
-    /// <summary>HumanVoiceModule.ValidateSend(Radio) 要求说话者背包里有可用对讲机。</summary>
+    /// <summary>
+    /// HumanVoiceModule.ValidateSend(Radio) 要求说话者背包里有开着且有电的对讲机。
+    /// 代理的对讲机保持满电、开启，并切到 remote_radio_range 档位（客户端用 max(听者, 代理) 档位判距离）。
+    /// </summary>
     private static bool EnsureRadio(Proxy proxy)
     {
         try
         {
-            if (proxy.Player.Items.OfType<RadioItem>().Any(r => r.IsUsable)) return true;
-            proxy.Player.AddItem(ItemType.Radio);
-            return proxy.Player.Items.OfType<RadioItem>().Any(r => r.IsUsable);
+            RadioItem? radio = proxy.Radio;
+            if (radio?.Base == null || radio.Base.Owner != proxy.Hub)
+            {
+                radio = proxy.Player.Items.OfType<RadioItem>().FirstOrDefault()
+                        ?? proxy.Player.AddItem(ItemType.Radio) as RadioItem;
+                proxy.Radio = radio;
+                if (radio?.Base == null) return false;
+            }
+
+            InventorySystem.Items.Radio.RadioItem b = radio.Base;
+            if (b.BatteryPercent < 50) b.BatteryPercent = 100;
+            if (!b.IsUsable) b.ServerProcessCmd(RadioMessages.RadioCommand.Enable);
+            for (int i = 0; b.RangeLevel != _radioRange && i < b.Ranges.Length; i++)
+                b.ServerProcessCmd(RadioMessages.RadioCommand.ChangeRange);
+            return b.IsUsable;
         }
         catch (Exception ex)
         {
-            Log.RateLimitedWarn("radio", $"[MeSL] 代理说话者发放对讲机失败: {ex.Message}");
+            Log.RateLimitedWarn("radio", $"[MeSL] 代理说话者对讲机准备失败: {ex.Message}");
             return false;
         }
     }

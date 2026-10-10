@@ -45,6 +45,14 @@ public static class GameMapping
         _ => CaptureKind.Other,
     };
 
+    public static VoiceChatChannel ChannelOf(CaptureKind kind) => kind switch
+    {
+        CaptureKind.Proximity => VoiceChatChannel.Proximity,
+        CaptureKind.Radio => VoiceChatChannel.Radio,
+        CaptureKind.Spectator => VoiceChatChannel.Spectator,
+        _ => VoiceChatChannel.None,
+    };
+
     public static string GroupLabel(MeshGroup g) => g switch
     {
         MeshGroup.GroupA => "A（D级/混沌）",

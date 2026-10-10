@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using System.ComponentModel;
+using InventorySystem.Items.Radio;
 
 namespace MeSL;
 
@@ -28,8 +29,13 @@ public class Config
     [Description("受信节点列表。每对节点使用同一把预共享密钥（≥32 字符），两端都要配置对方。")]
     public List<PeerConfig> Peers { get; set; } = new();
 
-    [Description("false（默认）= 雷达门：人类须正在用对讲机发言才进入远程频道；true = 关闭雷达门，近距离发言也转发。")]
+    [Description("只影响发送端。false（默认）= 雷达门：人类须正在用对讲机发言才转发；true = 关闭雷达门，近距离发言也转发。" +
+                 "无论取值，接收端都只以对讲机重注入远端语音，从不以近距离语音播放。")]
     public bool ForceRadio { get; set; } = false;
+
+    [Description("远端代理说话者对讲机的档位（LowRange / MediumRange / HighRange / UltraRange）。" +
+                 "客户端按 max(听者档位, 代理档位) 判定对讲机距离，默认 UltraRange 让远端语音尽量覆盖全图。")]
+    public RadioMessages.RadioRangeLevel RemoteRadioRange { get; set; } = RadioMessages.RadioRangeLevel.UltraRange;
 
     [Description("同时存在的远程代理说话者上限（全服 / 每个节点）。")]
     public int MaxRemoteSpeakers { get; set; } = 16;
