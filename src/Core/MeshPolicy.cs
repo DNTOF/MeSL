@@ -31,7 +31,8 @@ public enum SendVerdict
 public static class MeshPolicy
 {
     /// <summary>
-    /// 发送判定。雷达门（默认）：人类必须正在用对讲机发言才转发；ForceRadio=true 关闭雷达门，近距离发言也转发。
+    /// 发送判定（只影响发送服）。雷达门（默认）：人类必须正在用对讲机发言才转发；
+    /// ForceRadio=true 关闭雷达门，近距离发言也转发——但接收服仍一律按对讲机重注入（见 <see cref="ReinjectKind"/>）。
     /// 旁观者无对讲机，旁观者频道发言始终可转发（只会送达远端旁观者）。
     /// </summary>
     public static SendVerdict EvaluateSend(bool inRemoteChannel, MeshGroup group, CaptureKind kind, bool forceRadio)
@@ -63,13 +64,26 @@ public static class MeshPolicy
     }
 
     /// <summary>
-    /// 接收端（服务器侧）阵营过滤：永不信任客户端静音。代理说话者的语音只投递给
-    /// 「同一 mesh 频道 + 同一阵营分组」的本服玩家；旁观者只与旁观者互通。
-    /// 距离 / 对讲机范围由接收服原版语音逻辑在代理站点上自然判定，这里只做 MeSL 额外约束。
+    /// 远端语音在接收服的唯一重注入频道：人类一律 Radio（与采集时是近距离还是对讲机无关），
+    /// 旁观者为 Spectator（本身不带空间定位）。远端语音永远不以 Proximity 重注入。
     /// </summary>
-    public static bool AllowRemoteReceive(MeshGroup frameGroup, int frameLocalChannel, MeshGroup receiverGroup, int receiverChannel)
+    public static CaptureKind ReinjectKind(MeshGroup group) => group switch
+    {
+        MeshGroup.GroupA or MeshGroup.GroupB => CaptureKind.Radio,
+        MeshGroup.Spectator => CaptureKind.Spectator,
+        _ => CaptureKind.Other,
+    };
+
+    /// <summary>
+    /// 接收端（服务器侧）阵营过滤：永不信任客户端静音。代理说话者的语音只投递给
+    /// 「同一 mesh 频道 + 同一阵营分组」的本服玩家；旁观者只与旁观者互通；
+    /// 实际投递频道必须是 <see cref="ReinjectKind"/>，其余（尤其 Proximity）一律拒绝。
+    /// </summary>
+    public static bool AllowRemoteReceive(MeshGroup frameGroup, int frameLocalChannel, MeshGroup receiverGroup, int receiverChannel,
+        CaptureKind deliveredKind)
     {
         if (frameGroup == MeshGroup.None || receiverGroup == MeshGroup.None) return false;
+        if (deliveredKind != ReinjectKind(frameGroup)) return false;
         if (frameLocalChannel <= ChannelTable.LocalIndex || receiverChannel != frameLocalChannel) return false;
         return frameGroup == receiverGroup;
     }

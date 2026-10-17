@@ -24,7 +24,8 @@ public static class ReceiveFilter
             Player? receiver = ev.Player;
             if (sender == null || receiver == null) return;
 
-            // 1) 远端代理说话者：只投递给同一 mesh 频道 + 同一阵营分组的本服真人
+            // 1) 远端代理说话者：只以对讲机（旁观者为旁观者频道）投递给同一 mesh 频道 + 同一阵营分组的本服真人，
+            //    任何 Proximity 投递都拒绝
             if (ProxySpeakerRegistry.TryGetProxy(sender.NetworkId, out var proxy))
             {
                 if (receiver.IsDummy || !receiver.IsPlayer)
@@ -34,7 +35,7 @@ public static class ReceiveFilter
                 }
                 MeshGroup rg = GameMapping.GroupOf(receiver);
                 int rc = ChannelSelector.Get(receiver.NetworkId);
-                if (!MeshPolicy.AllowRemoteReceive(proxy.Group, proxy.LocalChannel, rg, rc))
+                if (!MeshPolicy.AllowRemoteReceive(proxy.Group, proxy.LocalChannel, rg, rc, GameMapping.KindOf(ev.Message.Channel)))
                     ev.IsAllowed = false;
                 return;
             }

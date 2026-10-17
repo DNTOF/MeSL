@@ -37,17 +37,31 @@ public class MeshPolicyTests
         Assert.Equal(expected, MeshPolicy.BlockLocalDelivery(remote, k));
 
     [Theory]
-    [InlineData(MeshGroup.GroupA, 1, MeshGroup.GroupA, 1, true)]
-    [InlineData(MeshGroup.GroupA, 1, MeshGroup.GroupB, 1, false)]
-    [InlineData(MeshGroup.GroupB, 2, MeshGroup.GroupB, 1, false)]
-    [InlineData(MeshGroup.GroupB, 1, MeshGroup.GroupB, 0, false)]
-    [InlineData(MeshGroup.Spectator, 1, MeshGroup.Spectator, 1, true)]
-    [InlineData(MeshGroup.Spectator, 1, MeshGroup.GroupA, 1, false)]
-    [InlineData(MeshGroup.GroupA, 1, MeshGroup.Spectator, 1, false)]
-    [InlineData(MeshGroup.GroupA, 0, MeshGroup.GroupA, 0, false)]
-    [InlineData(MeshGroup.None, 1, MeshGroup.None, 1, false)]
-    public void AllowRemoteReceive(MeshGroup fg, int fc, MeshGroup rg, int rc, bool expected) =>
-        Assert.Equal(expected, MeshPolicy.AllowRemoteReceive(fg, fc, rg, rc));
+    [InlineData(MeshGroup.GroupA, CaptureKind.Radio)]
+    [InlineData(MeshGroup.GroupB, CaptureKind.Radio)]
+    [InlineData(MeshGroup.Spectator, CaptureKind.Spectator)]
+    [InlineData(MeshGroup.None, CaptureKind.Other)]
+    public void ReinjectKind_NeverProximity(MeshGroup g, CaptureKind expected)
+    {
+        Assert.Equal(expected, MeshPolicy.ReinjectKind(g));
+        Assert.NotEqual(CaptureKind.Proximity, MeshPolicy.ReinjectKind(g));
+    }
+
+    [Theory]
+    [InlineData(MeshGroup.GroupA, 1, MeshGroup.GroupA, 1, CaptureKind.Radio, true)]
+    [InlineData(MeshGroup.GroupA, 1, MeshGroup.GroupA, 1, CaptureKind.Proximity, false)]
+    [InlineData(MeshGroup.GroupB, 1, MeshGroup.GroupB, 1, CaptureKind.Other, false)]
+    [InlineData(MeshGroup.GroupA, 1, MeshGroup.GroupB, 1, CaptureKind.Radio, false)]
+    [InlineData(MeshGroup.GroupB, 2, MeshGroup.GroupB, 1, CaptureKind.Radio, false)]
+    [InlineData(MeshGroup.GroupB, 1, MeshGroup.GroupB, 0, CaptureKind.Radio, false)]
+    [InlineData(MeshGroup.Spectator, 1, MeshGroup.Spectator, 1, CaptureKind.Spectator, true)]
+    [InlineData(MeshGroup.Spectator, 1, MeshGroup.Spectator, 1, CaptureKind.Radio, false)]
+    [InlineData(MeshGroup.Spectator, 1, MeshGroup.GroupA, 1, CaptureKind.Spectator, false)]
+    [InlineData(MeshGroup.GroupA, 1, MeshGroup.Spectator, 1, CaptureKind.Radio, false)]
+    [InlineData(MeshGroup.GroupA, 0, MeshGroup.GroupA, 0, CaptureKind.Radio, false)]
+    [InlineData(MeshGroup.None, 1, MeshGroup.None, 1, CaptureKind.Other, false)]
+    public void AllowRemoteReceive(MeshGroup fg, int fc, MeshGroup rg, int rc, CaptureKind k, bool expected) =>
+        Assert.Equal(expected, MeshPolicy.AllowRemoteReceive(fg, fc, rg, rc, k));
 
     [Fact]
     public void ShouldDial_ExactlyOneSide()

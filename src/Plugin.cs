@@ -51,13 +51,15 @@ public class Plugin : LabApi.Loader.Features.Plugins.Plugin<Config>
             return;
         _meshStarted = true;
 
-        bool reinject = ProxySpeakerRegistry.Init(Config.MaxRemoteSpeakers, Config.MaxRemoteSpeakersPerPeer, Config.ProxyIdleSeconds);
+        bool reinject = ProxySpeakerRegistry.Init(Config.MaxRemoteSpeakers, Config.MaxRemoteSpeakersPerPeer, Config.ProxyIdleSeconds,
+            Config.RemoteRadioRange);
         VoiceCapture.Configure(Config.ForceRadio);
         ChannelSelector.Init(table, Config.KeybindSettingId, Config.ShowChannelHint);
 
         LabApi.Events.Handlers.PlayerEvents.SendingVoiceMessage += VoiceCapture.OnSendingVoiceMessage;
         LabApi.Events.Handlers.PlayerEvents.ReceivingVoiceMessage += ReceiveFilter.OnReceivingVoiceMessage;
         LabApi.Events.Handlers.PlayerEvents.ChangingRole += ProxyGuards.OnChangingRole;
+        LabApi.Events.Handlers.PlayerEvents.ValidatedVisibility += ProxyGuards.OnValidatedVisibility;
         LabApi.Events.Handlers.PlayerEvents.ChangedRole += OnChangedRole;
         LabApi.Events.Handlers.PlayerEvents.Left += OnLeft;
         LabApi.Events.Handlers.ServerEvents.WaitingForPlayers += OnWaitingForPlayers;
@@ -66,7 +68,7 @@ public class Plugin : LabApi.Loader.Features.Plugins.Plugin<Config>
         _loop = Timing.RunCoroutine(Loop());
 
         Log.Info($"[MeSL] v{Version} 已启用：雷达门={(Config.ForceRadio ? "关闭（force_radio）" : "开启")}，" +
-                 $"远端语音重注入={(reinject ? "可用" : "不可用")}，代理上限 {Config.MaxRemoteSpeakers}/{Config.MaxRemoteSpeakersPerPeer}");
+                 $"远端语音重注入={(reinject ? $"仅对讲机（{Config.RemoteRadioRange}）" : "不可用")}，代理上限 {Config.MaxRemoteSpeakers}/{Config.MaxRemoteSpeakersPerPeer}");
     }
 
     public override void Disable()
@@ -76,6 +78,7 @@ public class Plugin : LabApi.Loader.Features.Plugins.Plugin<Config>
             LabApi.Events.Handlers.PlayerEvents.SendingVoiceMessage -= VoiceCapture.OnSendingVoiceMessage;
             LabApi.Events.Handlers.PlayerEvents.ReceivingVoiceMessage -= ReceiveFilter.OnReceivingVoiceMessage;
             LabApi.Events.Handlers.PlayerEvents.ChangingRole -= ProxyGuards.OnChangingRole;
+            LabApi.Events.Handlers.PlayerEvents.ValidatedVisibility -= ProxyGuards.OnValidatedVisibility;
             LabApi.Events.Handlers.PlayerEvents.ChangedRole -= OnChangedRole;
             LabApi.Events.Handlers.PlayerEvents.Left -= OnLeft;
             LabApi.Events.Handlers.ServerEvents.WaitingForPlayers -= OnWaitingForPlayers;

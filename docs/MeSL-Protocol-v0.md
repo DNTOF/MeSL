@@ -17,7 +17,7 @@
 | mesh 频道 | 按**名称**全网匹配的逻辑语音频道；下标 0 恒为「本地」（原版语音，不上线路） |
 | 发送服 / 接收服 | 说话者所在的服 / 把语音重注入的服 |
 | 站点（site） | 采集时说话者所在位置：房间（名称/形状/区域）+ 房间局部坐标 + 世界坐标 |
-| 代理说话者（proxy） | 接收服为每个远端说话者生成的 Dummy 玩家，语音以它的身份重注入 |
+| 代理说话者（proxy） | 接收服为每个远端说话者生成的 Dummy 玩家（对客户端隐身），语音以它的身份按对讲机重注入 |
 | 阵营分组 | A 组 = D 级 + 混沌；B 组 = 科学家 + 九尾狐（含设施警卫）；旁观者单独一组 |
 
 `server_id` 与频道名规则相同：1..32 个字符，仅 `a-z 0-9 -`，不得以 `-` 开头；按字节比较。
@@ -121,7 +121,7 @@ HELLO 必须是链路上的第一条 binary 消息，且只能出现一次。版
 |---|---|---|
 | 0 | u8 | `0x01` |
 | 1 | u8 | channel_index（发送方频道表下标） |
-| 2 | u8 | voice_channel：采集时**服务端校验后**的原版 `VoiceChatChannel`（`1` Proximity / `2` Radio / `4` Spectator） |
+| 2 | u8 | voice_channel：采集时**服务端校验后**的原版 `VoiceChatChannel`（`1` Proximity / `2` Radio / `4` Spectator）。仅供一致性校验与诊断，**不决定**接收服的重注入频道（§6） |
 | 3 | u8 | group：`1` A 组 / `2` B 组 / `3` 旁观者 |
 | 4 | u32 | origin_net_id：发送服上说话者的 netId |
 | 8 | u32 | seq：按说话者递增（回绕） |
@@ -164,21 +164,30 @@ HELLO 必须是链路上的第一条 binary 消息，且只能出现一次。版
 
 - 坐标 MUST 为有限值且 `|v| ≤ 10000`，否则整帧无效。
 - 采集：旁观者不带站点；其他身份带站点。
+- 用途：站点只决定代理在接收服的**服务端**位置，即对讲机发射点（客户端按发射点所在路点与听者做对讲机距离判定）。远端语音不以近距离语音播放，站点不用于任何近距离判定。
 - 还原（接收服）：在本服地图中找名称 + 形状 + 区域都相同的房间，用 `TransformPoint(局部坐标)` 还原；同类房间有多个时取还原点离发送方世界坐标最近的一个；找不到同类房间时，若发送方世界坐标落在本服某房间内则直接使用世界坐标，否则视为无法还原。
 - 两服地图种子不同时，局部坐标仍能把代理放到「同一种房间的同一位置」；种子相同时与世界坐标结果一致。
 
 ## 6. 重注入语义（接收服）
 
-接收服 MUST NOT 用 SpeakerToy 或任何二次编码的播放器回放远端语音，而是在**采集站点**以**等价说话者**的身份重注入，让本服原版的距离判定、对讲机判定与阵营过滤自然生效：
+接收服 MUST NOT 用 SpeakerToy 或任何二次编码的播放器回放远端语音，而是以**等价说话者**的身份经原版服务端语音入口重注入。
+远端语音 MUST **只**以对讲机频道重注入，MUST NOT 以 Proximity 重注入——无论采集时是近距离还是对讲机发言：
+
+| 帧 group | 重注入频道 |
+|---|---|
+| A 组 / B 组 | `Radio` |
+| 旁观者 | `Spectator`（本身不带空间定位） |
 
 1. **一个远端说话者一个代理**：键为 `(peer_id, origin_net_id)`。客户端按说话者 Hub 各自维护 Opus 解码器，多人共用一个代理会破坏解码状态。代理是 Dummy 玩家（`DummyUtils.SpawnDummy`），身份设为帧中的 `role`（`RoleSpawnFlags.None`），人类代理开启无敌。
 2. **身份校验**：`role` MUST 属于帧中的 `group`（例如 group=A 只能是 D 级 / 混沌身份），且 `voice_channel` 与分组相符（旁观者只能 Spectator，人类只能 Proximity / Radio）；否则丢弃。
-3. **定位**：人类代理按 §5 放到还原站点。无法还原时 Radio 帧照常投递（对讲机不依赖位置），Proximity 帧丢弃。
-4. **对讲机**：Radio 帧要求代理背包里有可用对讲机（原版 `HumanVoiceModule.ValidateSend(Radio)` 的要求），没有则发放一台。
-5. **注入**：构造 `VoiceMessage(proxyHub, voice_channel, opus, len)`，以代理自己的连接调用原版 `VoiceTransceiver.ServerReceiveMessage`。原版随后依次执行：说话者校验、限流、静音检查 → `ValidateSend` → `PlayerSendingVoiceMessage` → 对每个接收者 `ValidateReceive`（距离 / 可见性 / 对讲机）→ `PlayerReceivingVoiceMessage` → 下发 Opus 字节。
-6. **MeSL 接收过滤**（服务端、`PlayerReceivingVoiceMessage`，从不依赖客户端静音）：代理的语音只投递给本服真人，且接收者 MUST 当前选择同一 mesh 频道、阵营分组与帧相同。原版 `HumanVoiceModule.ValidateReceive` 本身**不区分**人类阵营，阵营隔离完全由这一步保证。
-7. **回收**：代理静默超过 `proxy_idle_seconds`（默认 6 s）、收到 SPEAKER_GONE、链路断开或回合重启时销毁。
-8. **副作用隔离**：代理只允许由 MeSL 改变身份（拒绝复活波次与其他来源的改动）；回合结束判定排除代理后重算存活阵营。
+3. **隐身**：代理 MUST 对本服所有观察者隐身（`PlayerValidatedVisibility` 置 `IsVisible = false`）。原因：客户端 `HumanVoiceModule` 收到 Radio 消息时会**同时**写入说话者模型上的近距离 3D 播放器（听者有可用对讲机时音量 0.35），服务端无法只下发「对讲机那一半」。隐身玩家在客户端被放到 `FpcMotor.InvisiblePosition`（y = 6000），这份近距离声音因此远在听距之外，听者只会听到对讲机声道；代理也不会在地图上出现。
+4. **定位**：人类代理的服务端位置按 §5 放到还原站点，作为对讲机发射点（原版 `TransmitterPositionMessage` 按服务端位置上报路点）。无法还原时保持原位，照常投递。
+5. **对讲机**：代理背包里 MUST 有开启且有电的对讲机（原版 `HumanVoiceModule.ValidateSend(Radio)` 的要求），没有则发放一台；电量低于 50% 时充满；档位切到配置 `remote_radio_range`（默认 `UltraRange`）。客户端按 `max(听者档位, 代理档位)` 做距离判定，并要求**听者自己有可用对讲机**——这是原版对讲机语义，MeSL 不绕过。
+6. **注入**：构造 `VoiceMessage(proxyHub, Radio | Spectator, opus, len)`，以代理自己的连接调用原版 `VoiceTransceiver.ServerReceiveMessage`。原版随后依次执行：说话者校验、限流、静音检查 → `ValidateSend` → `PlayerSendingVoiceMessage` → 对每个接收者 `ValidateReceive` → `PlayerReceivingVoiceMessage` → 下发 Opus 字节。
+7. **MeSL 接收过滤**（服务端、`PlayerReceivingVoiceMessage`，从不依赖客户端静音）：代理的语音只投递给本服真人，且 MUST 同时满足：接收者当前选择同一 mesh 频道；阵营分组与帧相同；实际投递频道等于上表的重注入频道（任何 Proximity 投递一律拒绝）。原版 `HumanVoiceModule.ValidateReceive` 本身**不区分**人类阵营，阵营隔离完全由这一步保证。
+8. **不使用 Intercom**：原版 Intercom 要求说话者是当前占用广播室的玩家，会抢占本服真实广播、触发全服广播 UI 与冷却，因此 v0 不把远端语音注入 Intercom。
+9. **回收**：代理静默超过 `proxy_idle_seconds`（默认 6 s）、收到 SPEAKER_GONE、链路断开或回合重启时销毁。
+10. **副作用隔离**：代理只允许由 MeSL 改变身份（拒绝复活波次与其他来源的改动）；回合结束判定排除代理后重算存活阵营。
 
 ## 7. 发送规则（发送服）
 
@@ -186,7 +195,7 @@ HELLO 必须是链路上的第一条 binary 消息，且只能出现一次。版
 |---|---|
 | 本地频道 | 原版语音，不转发 |
 | 远程频道 · 人类 · 对讲机发言 | 转发 |
-| 远程频道 · 人类 · 近距离发言 | 雷达门（默认）：不转发并提示需要对讲机；`force_radio: true`：转发 |
+| 远程频道 · 人类 · 近距离发言 | 雷达门（默认）：不转发并提示需要对讲机；`force_radio: true`：转发（接收服仍按 Radio 重注入） |
 | 远程频道 · 旁观者 · 旁观者频道 | 转发（只会送达远端旁观者） |
 | 远程频道 · SCP / 教程 / Overwatch 等 | 不可选择远程频道；身份变为不可用时自动回到本地 |
 
@@ -218,7 +227,8 @@ HELLO 必须是链路上的第一条 binary 消息，且只能出现一次。版
 
 ## 11. 待定事项
 
-- `force_radio: true` 时近距离发言目前按 Proximity 在站点重注入（只有站点附近、同频道同阵营的接收者听得到）。是否改为升级成 Radio 投递，待产品确认。
-- 对讲机档位（range）未上线路，代理使用默认档位。
-- 代理 Dummy 在本服可见（实体出现在站点）。不能用隐身效果隐藏：原版近距离判定依赖可见性，隐身会导致近距离语音收不到。
+- `force_radio` 只影响发送端雷达门；接收端恒为对讲机重注入。
+- 发送方的对讲机档位未上线路，接收服统一用 `remote_radio_range`。
+- 代理的服务端碰撞体仍在站点（客户端看不到）；是否需要关闭碰撞 / 改放到固定停靠点，待实机确认。
+- 远端语音要求听者自己有开启的对讲机（原版语义）；是否要为无对讲机的听者提供替代，待产品确认。
 - 链路加密（v1 候选：Noise / TLS-PSK）。
